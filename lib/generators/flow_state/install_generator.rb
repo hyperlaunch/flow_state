@@ -16,13 +16,8 @@ module FlowState
         migration_template 'create_flow_state_flow_transitions.rb', 'db/migrate/create_flow_state_flow_transitions.rb'
       end
 
-      # Ensures migration filenames are unique
-      def self.next_migration_number(dirname)
-        if ActiveRecord::Base.timestamped_migrations
-          Time.now.utc.strftime('%Y%m%d%H%M%S')
-        else
-          format('%.3d', (current_migration_number(dirname) + 1))
-        end
+      def self.next_migration_number(_dirname)
+        Time.now.utc.strftime('%Y%m%d%H%M%S')
       end
     end
   end
