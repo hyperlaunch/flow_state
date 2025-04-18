@@ -1,39 +1,207 @@
 # FlowState
 
-TODO: Delete this and the text below, and describe your gem
+> **Model workflows without magic.**
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/flow_state`. To experiment with that code, run `bin/console` for an interactive prompt.
+---
+
+**FlowState** provides a clean, Rails-native way to model **stepped workflows** as explicit, durable state machines.  
+It lets you define each step, move between states deliberately, and track execution — without relying on metaprogramming, `method_missing`, or hidden magic.
+
+Every workflow instance is persisted to the database.  
+Every transition is logged.  
+Every change happens through clear, intention-revealing methods you define yourself.
+
+Built for real-world systems where you need to:
+- Track complex, multi-step processes
+- Handle failures gracefully
+- Persist state safely across asynchronous jobs
+
+---
+
+## Key Features
+
+- **Explicit transitions** — Every state change is triggered manually via a method you define.
+- **Full execution history** — Every transition is recorded with timestamps and a history table.
+- **Error recovery** — Model and track failures directly with error states.
+- **Typed payloads** — Strongly-typed metadata attached to every workflow.
+- **Persistence-first** — Workflow state is stored in your database, not memory.
+- **No Magic** — No metaprogramming, no dynamic method generation, no `method_missing` tricks.
+
+---
 
 ## Installation
 
-TODO: Replace `UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG` with your gem name right after releasing it to RubyGems.org. Please do not do it earlier due to security reasons. Alternatively, replace this section with instructions to install your gem from git if you don't plan to release to RubyGems.org.
-
-Install the gem and add to the application's Gemfile by executing:
+Add to your bundle:
 
 ```bash
-bundle add UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+bundle add flow_state
 ```
 
-If bundler is not being used to manage dependencies, install the gem by executing:
+Generate the tables:
 
 ```bash
-gem install UPDATE_WITH_YOUR_GEM_NAME_IMMEDIATELY_AFTER_RELEASE_TO_RUBYGEMS_ORG
+bin/rails generate flow_state:install
+bin/rails db:migrate
 ```
 
-## Usage
+---
 
-TODO: Write usage instructions here
+## Example: Syncing song data with Soundcharts
 
-## Development
+Suppose you want to build a workflow that:
+- Gets song metadata from Soundcharts
+- Then fetches audience data
+- Tracks each step and handles retries on failure
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+---
 
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+### Define your Flow
 
-## Contributing
+```ruby
+class SyncSoundchartsFlow < FlowState::Base
+  prop :song_id, String
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/flow_state.
+  state :pending
+  state :picked
+  state :syncing_song_metadata
+  state :synced_song_metadata
+  state :syncing_audience_data
+  state :synced_audience_data
+  state :completed
+
+  error_state :failed_to_sync_song_metadata
+  error_state :failed_to_sync_audience_data
+
+  initial_state :pending
+
+  def pick!
+    transition!(
+      from: %i[pending completed failed_to_sync_song_metadata failed_to_sync_audience_data],
+      to: :picked,
+      after_transition: -> { sync_song_metadata }
+    )
+  end
+
+  def start_song_metadata_sync!
+    transition!(from: :picked, to: :syncing_song_metadata)
+  end
+
+  def finish_song_metadata_sync!
+    transition!(
+      from: :syncing_song_metadata, to: :synced_song_metadata,
+      after_transition: -> { sync_audience_data }
+    )
+  end
+
+  def fail_song_metadata_sync!
+    transition!(from: :syncing_song_metadata, to: :failed_to_sync_song_metadata)
+  end
+
+  def start_audience_data_sync!
+    transition!(from: :synced_song_metadata, to: :syncing_audience_data)
+  end
+
+  def finish_audience_data_sync!
+    transition!(
+      from: :syncing_audience_data, to: :synced_audience_data,
+      after_transition: -> { complete! }
+    )
+  end
+
+  def fail_audience_data_sync!
+    transition!(from: :syncing_audience_data, to: :failed_to_sync_audience_data)
+  end
+
+  def complete!
+    transition!(from: :synced_audience_data, to: :completed, after_transition: -> { destroy })
+  end
+
+  private
+
+  def song
+    @song ||= Song.find(song_id)
+  end
+
+  def sync_song_metadata
+    SyncSoundchartsSongJob.perform_later(flow_id: id)
+  end
+
+  def sync_audience_data
+    SyncSoundchartsAudienceJob.perform_later(flow_id: id)
+  end
+end
+```
+
+---
+
+### Background Jobs
+
+Each job moves the flow through the correct states, step-by-step.
+
+---
+
+**Sync song metadata**
+
+```ruby
+class SyncSoundchartsSongJob < ApplicationJob
+  def perform(flow_id:)
+    @flow_id = flow_id
+
+    flow.start_song_metadata_sync!
+
+    # Fetch song metadata from Soundcharts etc
+
+    flow.finish_song_metadata_sync!
+  rescue
+    flow.fail_song_metadata_sync!
+    raise
+  end
+
+  private
+
+  def flow
+    @flow ||= SyncSoundchartsFlow.find(@flow_id)
+  end
+end
+```
+
+---
+
+**Sync audience data**
+
+```ruby
+class SyncSoundchartsAudienceJob < ApplicationJob
+  def perform(flow_id:)
+    @flow_id = flow_id
+
+    flow.start_audience_data_sync!
+
+    # Fetch audience data from Soundcharts etc
+
+    flow.finish_audience_data_sync!
+  rescue
+    flow.fail_audience_data_sync!
+    raise
+  end
+
+  private
+
+  def flow
+    @flow ||= SyncSoundchartsFlow.find(@flow_id)
+  end
+end
+```
+
+---
+
+## Why use FlowState?
+
+Because it enables you to model workflows explicitly,
+and track real-world execution reliably —  
+**without any magic**.
+
+---
 
 ## License
 
-The gem is available as open source under the terms of the [MIT License](https://opensource.org/licenses/MIT).
+MIT.
