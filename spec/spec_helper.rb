@@ -3,6 +3,10 @@
 require 'bundler/setup'
 require 'active_record'
 require 'flow_state'
+require 'rails/generators'
+require 'active_support'
+require 'active_support/core_ext'
+require 'fileutils'
 
 ActiveRecord::Base.establish_connection(
   adapter: 'sqlite3',

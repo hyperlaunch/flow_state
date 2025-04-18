@@ -11,19 +11,19 @@ module FlowState
 
       source_root File.expand_path('templates', __dir__)
 
+      @call_count = 0
+
       def create_migrations
-        timestamp = Time.now.utc.strftime('%Y%m%d%H%M%S')
-
-        migration_template 'create_flow_state_flows.rb', "db/migrate/#{timestamp}_create_flow_state_flows.rb"
-
-        second_timestamp = (timestamp.to_i + 1).to_s
-
-        migration_template 'create_flow_state_flow_transitions.rb',
-                           "db/migrate/#{second_timestamp}_create_flow_state_flow_transitions.rb"
+        migration_template 'create_flow_state_flows.rb', 'db/migrate/create_flow_state_flows.rb'
+        migration_template 'create_flow_state_flow_transitions.rb', 'db/migrate/create_flow_state_flow_transitions.rb'
       end
 
       def self.next_migration_number(_dirname)
-        Time.now.utc.strftime('%Y%m%d%H%M%S')
+        @call_count ||= 0
+        timestamp = Time.now.utc.strftime('%Y%m%d%H%M%S').to_i
+        migration_number = timestamp + @call_count
+        @call_count += 1
+        migration_number.to_s
       end
     end
   end
