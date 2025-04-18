@@ -5,7 +5,7 @@ class CreateFlowStateFlows < ActiveRecord::Migration[8.0]
   def change
     create_table :flow_state_flows do |t|
       t.string :current_state, null: false
-      t.jsonb  :payload
+      t.json :payload
       t.timestamps
     end
   end
