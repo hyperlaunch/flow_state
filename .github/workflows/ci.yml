@@ -18,7 +18,7 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: 3.3
-          # bundler-cache: true
+          bundler-cache: true
 
       - name: Install system dependencies
         run: sudo apt-get install -y libsqlite3-dev
