@@ -7,7 +7,7 @@ require 'fileutils'
 require 'rails/generators'
 require 'flow_state/install_generator'
 
-RSpec.describe FlowState::Generators::InstallGenerator, type: :generator do
+RSpec.describe FlowState::Generators::InstallGenerator, type: :generator do # rubocop:disable Metrics/BlockLength
   destination_root = File.expand_path('tmp/generator_test', __dir__)
   migration_dir = File.join(destination_root, 'db/migrate')
 
