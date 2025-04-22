@@ -1,31 +1,34 @@
 # FlowState
 
-> **Model workflows cleanly and explicitly.**
+> **Model workflows cleanly, explicitly, and with durable persistence between steps.**
 
 ---
 
-**FlowState** provides a clean, Rails-native way to model **stepped workflows** as explicit, durable state machines.  
-It lets you define each step, move between states deliberately, and track execution — without relying on metaprogramming, `method_missing`, or hidden magic.
+**FlowState** provides a clean, Rails-native way to model **stepped workflows** as explicit, durable workflows, with support for persisting arbitrary artefacts between transitions. It lets you define each step, move between states safely, track execution history, and persist payloads ("artefacts") in a type-safe way — without using metaprogramming, `method_missing`, or other hidden magic.
 
-Every workflow instance is persisted to the database.  
-Every transition is logged.  
-Every change happens through clear, intention-revealing methods you define yourself.
+Perfect for workflows that rely on third party resources and integrations.
+Every workflow instance, transition and artefact is persisted to the database.
+Every change happens through clear, intention-revealing methods that you define yourself.
 
 Built for real-world systems where you need to:
 - Track complex, multi-step processes
-- Handle failures gracefully
-- Persist state safely across asynchronous jobs
+- Handle failures gracefully with error states and retries
+- Persist state and interim data across asynchronous jobs
+- Store and type-check arbitrary payloads (artefacts) between steps
+- Avoid race conditions via database locks and explicit guards
 
 ---
 
 ## Key Features
 
-- **Explicit transitions** — Every state change is triggered manually via a method you define.
-- **Full execution history** — Every transition is recorded with timestamps and a history table.
-- **Error recovery** — Model and track failures directly with error states.
-- **Typed payloads** — Strongly-typed metadata attached to every workflow.
-- **Persistence-first** — Workflow state is stored in your database, not memory.
-- **No Magic** — No metaprogramming, no dynamic method generation, no `method_missing` tricks.
+- **Explicit transitions** — Every state change is triggered manually via a method you define.  
+- **Full execution history** — Every transition is recorded with timestamps and a history table.  
+- **Error recovery** — Model and track failures directly with error states.  
+- **Typed payloads** — Strongly-typed metadata attached to every workflow. 
+- **Artefact persistence** — Declare named and typed artefacts to persist between specific transitions.  
+- **Guard clauses** — Protect transitions with guards that raise if conditions aren’t met.  
+- **Persistence-first** — Workflow state and payloads are stored in your database, not memory.  
+- **No Magic** — No metaprogramming, no dynamic method generation, no `method_missing` tricks.  
 
 ---
 
@@ -50,16 +53,18 @@ bin/rails db:migrate
 
 Suppose you want to build a workflow that:
 - Fetches a response from a third party API
-- Then saves it to each database
-- As separate jobs, tracking each step and permitting retries on failure
-- While avoiding race conditions
+- Allows for retrying the fetch on failure
+- And persists the response to the workflow
+- Then saves the persisted response to the database
+- As two separate, encapsulated jobs
+- Tracking each step, while protecting against race conditions
 
 ---
 
 ### Define your Flow
 
 ```ruby
-class SyncThirdPartApiFlow < FlowState::Base
+class SyncThirdPartyApiFlow < FlowState::Base
   prop :my_record_id, String
   prop :third_party_id, String
 
@@ -110,8 +115,8 @@ class SyncThirdPartApiFlow < FlowState::Base
   
   def start_record_save!
     transition!(
-      from: %i[fetched_third_party_api failed_to_save_my_record], 
-      to: :saving_my_record,
+      from: %i[fetched_third_party_api failed_to_save_my_record],
+      to:   :saving_my_record,
       guard: -> { flow_artefacts.where(name: 'third_party_api_response').exists? }
     )
   end
@@ -158,7 +163,7 @@ Each job moves the flow through the correct states, step-by-step.
 **Create and start the flow**
 
 ```ruby
-flow = SyncThirdPartApiFlow.create(
+flow = SyncThirdPartyApiFlow.create(
   my_record_id: "my_local_record_id", 
   third_party_id: "some_service_id"
 )
@@ -172,6 +177,10 @@ flow.pick!
 
 ```ruby
 class FetchThirdPartyJob < ApplicationJob
+  retry_on StandardError,
+           wait: ->(executions) { 10.seconds * (2**executions) },
+           attempts: 3
+
   def perform(flow_id:)
     @flow_id = flow_id
 
@@ -188,7 +197,7 @@ class FetchThirdPartyJob < ApplicationJob
   private
 
   def flow
-    @flow ||= SyncThirdPartApiFlow.find(@flow_id)
+    @flow ||= SyncThirdPartyApiFlow.find(@flow_id)
   end
 end
 ```
@@ -215,7 +224,7 @@ class SaveLocalRecordJob < ApplicationJob
   private
 
   def flow
-    @flow ||= SyncThirdPartApiFlow.find(@flow_id)
+    @flow ||= SyncThirdPartyApiFlow.find(@flow_id)
   end
 
   def third_party_payload
