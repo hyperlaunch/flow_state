@@ -155,6 +155,19 @@ Each job moves the flow through the correct states, step-by-step.
 
 ---
 
+**Create and start the flow**
+
+```ruby
+flow = SyncThirdPartApiFlow.create(
+  my_record_id: "my_local_record_id", 
+  third_party_id: "some_service_id"
+)
+
+flow.pick!
+```
+
+---
+
 **Fetch Third Party API Response**
 
 ```ruby
@@ -164,7 +177,7 @@ class FetchThirdPartyJob < ApplicationJob
 
     flow.start_third_party_api_request!
 
-    response = ThirdPartyApiRequest.new.to_h
+    response = ThirdPartyApiRequest.new(id: flow.third_party_id).to_h
 
     flow.finish_third_party_api_request!(response)
   rescue
@@ -191,7 +204,7 @@ class SaveLocalRecordJob < ApplicationJob
 
     flow.start_record_save!
 
-    MyRecord.create!(payload)
+    record.update!(payload: third_party_payload)
 
     flow.finish_record_save!
   rescue
@@ -205,10 +218,14 @@ class SaveLocalRecordJob < ApplicationJob
     @flow ||= SyncThirdPartApiFlow.find(@flow_id)
   end
 
-  def payload
-    @payload ||= flow.flow_artefacts.find_by(
-      name: :third_party_api_response
-    )&.payload
+  def third_party_payload
+    flow.flow_artefacts
+        .find_by!(name: 'third_party_api_response')
+        .payload
+  end
+
+  def record
+    @record ||= MyRecord.find(flow.my_record_id)
   end
 end
 ```
