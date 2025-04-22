@@ -69,8 +69,8 @@ class SyncSoundchartsFlow < FlowState::Base
   state :synced_audience_data
   state :completed
 
-  error_state :failed_to_sync_song_metadata
-  error_state :failed_to_sync_audience_data
+  state :failed_to_sync_song_metadata, error: true
+  state :failed_to_sync_audience_data, error: true
 
   initial_state :pending
 
@@ -83,7 +83,7 @@ class SyncSoundchartsFlow < FlowState::Base
   end
 
   def start_song_metadata_sync!
-    transition!(from: :picked, to: :syncing_song_metadata)
+    transition!(from: %i[picked failed_to_sync_song_metadata], to: :syncing_song_metadata)
   end
 
   def finish_song_metadata_sync!
@@ -98,7 +98,10 @@ class SyncSoundchartsFlow < FlowState::Base
   end
 
   def start_audience_data_sync!
-    transition!(from: :synced_song_metadata, to: :syncing_audience_data)
+    transition!(
+      from: %i[synced_song_metadata failed_to_sync_audience_data], 
+      to: :syncing_audience_data
+    )
   end
 
   def finish_audience_data_sync!

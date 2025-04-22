@@ -25,28 +25,31 @@ RSpec.describe FlowState::Generators::InstallGenerator, type: :generator do # ru
   end
 
   let(:migration_files) { Dir.glob(File.join(migration_dir, '*.rb')) }
-  let(:filenames) { migration_files.map { |f| File.basename(f) } }
-  let(:timestamps) { filenames.map { |filename| filename[/^\d{14}/] } }
+  let(:filenames)       { migration_files.map { |f| File.basename(f) } }
+  let(:timestamps)      { filenames.map { |filename| filename[/^\d{14}/] } }
 
-  it 'creates two migration files' do
-    expect(migration_files.size).to eq(2)
+  it 'creates three migration files' do
+    expect(migration_files.size).to eq(3)
   end
 
   it 'names the migrations correctly' do
     expect(filenames.any? { |name| name.match(/^\d{14}_create_flow_state_flows\.rb$/) }).to be true
     expect(filenames.any? { |name| name.match(/^\d{14}_create_flow_state_flow_transitions\.rb$/) }).to be true
+    expect(filenames.any? { |name| name.match(/^\d{14}_create_flow_state_transition_artefacts\.rb$/) }).to be true
   end
 
   it 'assigns unique timestamps to each migration' do
-    expect(timestamps.size).to eq(2)
-    expect(timestamps.uniq.size).to eq(2)
+    expect(timestamps.size).to eq(3)
+    expect(timestamps.uniq.size).to eq(3)
   end
 
   it 'generates correct class definitions inside the migrations' do
-    flow_state_flows = migration_files.find { |f| f.include?('create_flow_state_flows') }
-    flow_state_flow_transitions = migration_files.find { |f| f.include?('create_flow_state_flow_transitions') }
+    flows_migration        = migration_files.find { |f| f.include?('create_flow_state_flows') }
+    transitions_migration  = migration_files.find { |f| f.include?('create_flow_state_flow_transitions') }
+    artefacts_migration    = migration_files.find { |f| f.include?('create_flow_state_transition_artefacts') }
 
-    expect(File.read(flow_state_flows)).to include('class CreateFlowStateFlows')
-    expect(File.read(flow_state_flow_transitions)).to include('class CreateFlowStateFlowTransitions')
+    expect(File.read(flows_migration)).to       include('class CreateFlowStateFlows')
+    expect(File.read(transitions_migration)).to include('class CreateFlowStateFlowTransitions')
+    expect(File.read(artefacts_migration)).to   include('class CreateFlowStateTransitionArtefacts')
   end
 end

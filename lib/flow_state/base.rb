@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module FlowState
-  # Base Model to be extended by app models
+  # Base Model to be extended by app flows
   class Base < ActiveRecord::Base
     class UnknownStateError < StandardError; end
     class InvalidTransitionError < StandardError; end
