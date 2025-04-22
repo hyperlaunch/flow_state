@@ -7,8 +7,9 @@ module FlowState
     class InvalidTransitionError < StandardError; end
     class PayloadValidationError < StandardError; end
 
+    DEPRECATOR = ActiveSupport::Deprecation.new(FlowState::VERSION, 'FlowState')
+
     self.table_name = 'flow_state_flows'
-    # self.abstract_class = true - this stops Rails respecting STI
 
     has_many :flow_transitions,
              class_name: 'FlowState::FlowTransition',
@@ -17,13 +18,19 @@ module FlowState
              dependent: :destroy
 
     class << self
-      def state(name)
-        all_states << name.to_sym
+      def state(name, error: false)
+        name = name.to_sym
+        all_states << name
+        error_states << name if error
       end
 
       def error_state(name)
-        error_states << name.to_sym
-        state(name)
+        DEPRECATOR.warn(
+          'FlowState::Base.error_state is deprecated. ' \
+          'Use state(name, error: true) instead.'
+        )
+
+        state(name, error: true)
       end
 
       def initial_state(name = nil)
@@ -61,7 +68,8 @@ module FlowState
 
       with_lock do
         unless from.include?(current_state&.to_sym)
-          raise InvalidTransitionError, "state #{current_state} not in #{from} (#{from.inspect}->#{to.inspect}"
+          raise InvalidTransitionError,
+                "state #{current_state} not in #{from} (#{from.inspect}->#{to.inspect}"
         end
 
         transaction do
@@ -76,7 +84,9 @@ module FlowState
       after_transition&.call
     end
 
-    def errored? = self.class.error_states.include?(current_state&.to_sym)
+    def errored?
+      self.class.error_states.include?(current_state&.to_sym)
+    end
 
     private
 
