@@ -63,7 +63,6 @@ module FlowState
 
     after_initialize { self.current_state ||= resolve_initial_state }
 
-    # Public API: handles state change, guards, artefacts and callback
     def transition!(from:, to:, guard: nil, persists: nil, after_transition: nil, &block)
       setup_transition!(from, to, guard, persists, &block)
       perform_transition!(to, persists)
@@ -76,7 +75,6 @@ module FlowState
 
     private
 
-    # 1) validate inputs, run guard, capture artefact info
     def setup_transition!(from, to, guard, persists, &block)
       @from_states = Array(from).map(&:to_sym)
       @to_state    = to.to_sym
@@ -86,8 +84,7 @@ module FlowState
       @artefact_name, @artefact_data = load_artefact(persists, &block) if persists
     end
 
-    # 2) inside DB lock + tx create transition, update state, persist artefact
-    def perform_transition!(to, persists)
+    def perform_transition!(to, persists) # rubocop:disable Metrics/MethodLength
       with_lock do
         ensure_valid_from_state!(@from_states, to)
         transaction do

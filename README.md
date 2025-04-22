@@ -1,6 +1,6 @@
 # FlowState
 
-> **Model workflows without magic.**
+> **Model workflows cleanly and explicitly.**
 
 ---
 
@@ -46,91 +46,103 @@ bin/rails db:migrate
 
 ---
 
-## Example: Syncing song data with Soundcharts
+## Example: Saving a third party API response to local database
 
 Suppose you want to build a workflow that:
-- Gets song metadata from Soundcharts
-- Then fetches audience data
-- Tracks each step and handles retries on failure
+- Fetches a response from a third party API
+- Then saves it to each database
+- As separate jobs, tracking each step and permitting retries on failure
+- While avoiding race conditions
 
 ---
 
 ### Define your Flow
 
 ```ruby
-class SyncSoundchartsFlow < FlowState::Base
-  prop :song_id, String
+class SyncThirdPartApiFlow < FlowState::Base
+  prop :my_record_id, String
+  prop :third_party_id, String
 
   state :pending
   state :picked
-  state :syncing_song_metadata
-  state :synced_song_metadata
-  state :syncing_audience_data
-  state :synced_audience_data
+  state :fetching_third_party_api
+  state :fetched_third_party_api
+  state :failed_to_fetch_third_party_api, error: true
+  state :saving_my_record
+  state :saved_my_record
+  state :failed_to_save_my_record, error: true
   state :completed
 
-  state :failed_to_sync_song_metadata, error: true
-  state :failed_to_sync_audience_data, error: true
+  persist :third_party_api_response
 
   initial_state :pending
 
   def pick!
     transition!(
-      from: %i[pending completed failed_to_sync_song_metadata failed_to_sync_audience_data],
+      from: %i[pending],
       to: :picked,
-      after_transition: -> { sync_song_metadata }
+      after_transition: -> { enqueue_fetch }
     )
   end
 
-  def start_song_metadata_sync!
-    transition!(from: %i[picked failed_to_sync_song_metadata], to: :syncing_song_metadata)
-  end
-
-  def finish_song_metadata_sync!
+  def start_third_party_api_request!
     transition!(
-      from: :syncing_song_metadata, to: :synced_song_metadata,
-      after_transition: -> { sync_audience_data }
+      from: %i[picked failed_to_fetch_third_party_api], 
+      to: :fetching_third_party_api
     )
   end
 
-  def fail_song_metadata_sync!
-    transition!(from: :syncing_song_metadata, to: :failed_to_sync_song_metadata)
+  def finish_third_party_api_request!(result)
+    transition!(
+      from: :fetching_third_party_api,
+      to:   :fetched_third_party_api,
+      persists: :third_party_api_response,
+      after_transition: -> { enqueue_save }
+    ) { result }
   end
 
-  def start_audience_data_sync!
+  def fail_third_party_api_request!
     transition!(
-      from: %i[synced_song_metadata failed_to_sync_audience_data], 
-      to: :syncing_audience_data
+      from: :fetching_third_party_api, 
+      to: :failed_to_fetch_third_party_api
+    )
+  end
+  
+  def start_record_save!
+    transition!(
+      from: %i[fetched_third_party_api failed_to_save_my_record], 
+      to: :saving_my_record,
+      guard: -> { flow_artefacts.where(name: 'third_party_api_response').exists? }
     )
   end
 
-  def finish_audience_data_sync!
+  def finish_record_save!
     transition!(
-      from: :syncing_audience_data, to: :synced_audience_data,
+      from: :saving_my_record, 
+      to: :saved_my_record,
       after_transition: -> { complete! }
     )
   end
 
-  def fail_audience_data_sync!
-    transition!(from: :syncing_audience_data, to: :failed_to_sync_audience_data)
+  def fail_record_save!
+    transition!(
+      from: :saving_my_record, 
+      to: :failed_to_save_my_record
+    )
   end
 
   def complete!
-    transition!(from: :synced_audience_data, to: :completed, after_transition: -> { destroy })
+    transition!(from: :saved_my_record, to: :completed, after_transition: -> { destroy })
   end
 
   private
 
-  def song
-    @song ||= Song.find(song_id)
+  def enqueue_fetch
+    FetchThirdPartyJob.perform_later(flow_id: id)
   end
 
-  def sync_song_metadata
-    SyncSoundchartsSongJob.perform_later(flow_id: id)
-  end
-
-  def sync_audience_data
-    SyncSoundchartsAudienceJob.perform_later(flow_id: id)
+  def enqueue_save
+    SaveLocalRecordJob.perform_later(flow_id: id)
   end
 end
 ```
@@ -143,54 +155,60 @@ Each job moves the flow through the correct states, step-by-step.
 
 ---
 
-**Sync song metadata**
+**Fetch Third Party API Response**
 
 ```ruby
-class SyncSoundchartsSongJob < ApplicationJob
+class FetchThirdPartyJob < ApplicationJob
   def perform(flow_id:)
     @flow_id = flow_id
 
-    flow.start_song_metadata_sync!
+    flow.start_third_party_api_request!
 
-    # Fetch song metadata from Soundcharts etc
+    response = ThirdPartyApiRequest.new.to_h
 
-    flow.finish_song_metadata_sync!
+    flow.finish_third_party_api_request!(response)
   rescue
-    flow.fail_song_metadata_sync!
+    flow.fail_third_party_api_request!
     raise
   end
 
   private
 
   def flow
-    @flow ||= SyncSoundchartsFlow.find(@flow_id)
+    @flow ||= SyncThirdPartApiFlow.find(@flow_id)
   end
 end
 ```
 
 ---
 
-**Sync audience data**
+**Save Result to Local Database**
 
 ```ruby
-class SyncSoundchartsAudienceJob < ApplicationJob
+class SaveLocalRecordJob < ApplicationJob
   def perform(flow_id:)
     @flow_id = flow_id
 
-    flow.start_audience_data_sync!
+    flow.start_record_save!
 
-    # Fetch audience data from Soundcharts etc
+    MyRecord.create!(payload)
 
-    flow.finish_audience_data_sync!
+    flow.finish_record_save!
   rescue
-    flow.fail_audience_data_sync!
+    flow.fail_record_save!
     raise
   end
 
   private
 
   def flow
-    @flow ||= SyncSoundchartsFlow.find(@flow_id)
+    @flow ||= SyncThirdPartApiFlow.find(@flow_id)
+  end
+
+  def payload
+    @payload ||= flow.flow_artefacts.find_by(
+      name: :third_party_api_response
+    )&.payload
   end
 end
 ```
