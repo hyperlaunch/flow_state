@@ -9,5 +9,11 @@ module FlowState
                class_name: 'FlowState::Base',
                foreign_key: :flow_id,
                inverse_of: :flow_transitions
+
+    has_many :flow_artefacts,
+             class_name: 'FlowState::TransitionArtefact',
+             foreign_key: :transition_id,
+             inverse_of: :transition,
+             dependent: :destroy
   end
 end

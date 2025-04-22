@@ -26,6 +26,13 @@ ActiveRecord::Schema.define do
     t.string :transitioned_to,   null: false
     t.timestamps
   end
+
+  create_table :flow_state_transition_artefacts do |t|
+    t.references :transition, null: false, foreign_key: { to_table: :flow_state_flow_transitions }
+    t.string :name, null: false
+    t.json :payload
+    t.timestamps
+  end
 end
 
 RSpec.configure do |config|

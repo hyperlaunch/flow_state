@@ -16,6 +16,8 @@ module FlowState
       def create_migrations
         migration_template 'create_flow_state_flows.rb', 'db/migrate/create_flow_state_flows.rb'
         migration_template 'create_flow_state_flow_transitions.rb', 'db/migrate/create_flow_state_flow_transitions.rb'
+        migration_template 'create_flow_state_transition_artefacts.rb',
+                           'db/migrate/create_flow_state_transition_artefacts.rb'
       end
 
       def self.next_migration_number(_dirname)
