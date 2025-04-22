@@ -61,7 +61,7 @@ module FlowState
     validates :current_state, presence: true
     validate :validate_payload
 
-    after_initialize { self.current_state ||= resolve_initial_state }
+    after_initialize :assign_initial_state, if: :new_record?
 
     def transition!(from:, to:, guard: nil, persists: nil, after_transition: nil, &block)
       setup_transition!(from, to, guard, persists, &block)
@@ -75,6 +75,10 @@ module FlowState
 
     private
 
+    def assign_initial_state
+      self.current_state ||= resolve_initial_state
+    end
+
     def setup_transition!(from, to, guard, persists, &block)
       @from_states = Array(from).map(&:to_sym)
       @to_state    = to.to_sym
@@ -85,9 +89,10 @@ module FlowState
     end
 
     def perform_transition!(to, persists) # rubocop:disable Metrics/MethodLength
-      with_lock do
-        ensure_valid_from_state!(@from_states, to)
-        transaction do
+      transaction do
+        save! if changed?
+        with_lock do
+          ensure_valid_from_state!(@from_states, to)
           @tr = flow_transitions.create!(
             transitioned_from: current_state,
             transitioned_to: to
