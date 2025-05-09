@@ -37,4 +37,13 @@ Gem::Specification.new do |spec|
   # For more information and examples about making a new gem, check out our
   # guide at: https://bundler.io/guides/creating_gem.html
   spec.metadata['rubygems_mfa_required'] = 'true'
+
+  spec.post_install_message = <<~MSG
+    **FlowState 0.2 contains breaking changes.**
+
+    If you are upgrading from any 0.1.x release,
+    read the migration guide first:
+
+    https://github.com/hyperlaunch/flow_state/blob/main/MIGRATION_0_1_to_0_2.md
+  MSG
 end

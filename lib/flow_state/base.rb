@@ -3,11 +3,14 @@
 module FlowState
   # Base Model to be extended by app flows
   class Base < ActiveRecord::Base # rubocop:disable Metrics/ClassLength
-    class UnknownStateError      < StandardError; end
+    class UnknownStateError < StandardError; end
     class InvalidTransitionError < StandardError; end
     class PayloadValidationError < StandardError; end
-    class GuardFailedError       < StandardError; end
-    class UnknownArtefactError   < StandardError; end
+    class PropsValidationError < StandardError; end
+    class GuardFailedError < StandardError; end
+    class UnknownArtefactError < StandardError; end
+    class MissingInitialStateError   < StandardError; end
+    class MissingCompletedStateError < StandardError; end
 
     DEPRECATOR = ActiveSupport::Deprecation.new(FlowState::VERSION, 'FlowState')
 
@@ -32,12 +35,23 @@ module FlowState
         name ? @initial_state = name.to_sym : @initial_state
       end
 
-      def prop(name, type)
-        payload_schema[name.to_sym] = type
-        define_method(name) { payload&.dig(name.to_s) }
+      def completed_state(name = nil)
+        name ? @completed_state = name.to_sym : @completed_state
       end
 
-      def persist(name, type)
+      def destroy_on_complete(flag: true)
+        @destroy_on_complete = flag
+      end
+
+      def destroy_on_complete?
+        !!@destroy_on_complete
+      end
+
+      def prop(name, type)
+        props_schema[name.to_sym] = type
+      end
+
+      def persists(name, type)
         artefact_schema[name.to_sym] = type
       end
 
@@ -49,8 +63,8 @@ module FlowState
         @error_states ||= []
       end
 
-      def payload_schema
-        @payload_schema ||= {}
+      def props_schema
+        @props_schema ||= {}
       end
 
       def artefact_schema
@@ -59,13 +73,15 @@ module FlowState
     end
 
     validates :current_state, presence: true
-    validate :validate_payload
+    validate :validate_props
+    after_commit :handle_completion, on: :update
 
+    after_initialize :validate_initial_states!, if: :new_record?
     after_initialize :assign_initial_state, if: :new_record?
 
-    def transition!(from:, to:, guard: nil, persists: nil, after_transition: nil, &block)
-      setup_transition!(from, to, guard, persists, &block)
-      perform_transition!(to, persists)
+    def transition!(from:, to:, guard: nil, persist: nil, after_transition: nil, &block)
+      setup_transition!(from, to, guard, persist, &block)
+      perform_transition!(to, persist)
       after_transition&.call
     end
 
@@ -73,10 +89,35 @@ module FlowState
       self.class.error_states.include?(current_state&.to_sym)
     end
 
+    def completed?
+      self.class.completed_state && current_state&.to_sym == self.class.completed_state
+    end
+
+    def handle_completion
+      return unless completed?
+
+      if self.class.destroy_on_complete?
+        destroy!
+      elsif completed_at.nil?
+        update_column(:completed_at, Time.current)
+      end
+    end
+
     private
 
+    def validate_initial_states!
+      init_state = self.class.initial_state
+      comp_state = self.class.completed_state
+
+      raise MissingInitialStateError,   "#{self.class} must declare initial_state"   unless init_state
+      raise MissingCompletedStateError, "#{self.class} must declare completed_state" unless comp_state
+
+      unknown = [init_state, comp_state] - self.class.all_states
+      raise UnknownStateError, "unknown #{unknown.join(', ')}" if unknown.any?
+    end
+
     def assign_initial_state
-      self.current_state ||= resolve_initial_state
+      self.current_state ||= self.class.initial_state
     end
 
     def setup_transition!(from, to, guard, persists, &block)
@@ -97,7 +138,11 @@ module FlowState
             transitioned_from: current_state,
             transitioned_to: to
           )
-          update!(current_state: to)
+
+          attrs = { current_state: to }
+          attrs[:last_errored_at] = (Time.current if self.class.error_states.include?(to.to_sym))
+          update!(attrs)
+
           persist_artefact! if persists
         end
       end
@@ -126,7 +171,8 @@ module FlowState
     def persist_artefact!
       expected = self.class.artefact_schema[@artefact_name]
       unless @artefact_data.is_a?(expected)
-        raise PayloadValidationError, "artefact #{@artefact_name} must be #{expected}"
+        raise PayloadValidationError,
+              "artefact #{@artefact_name} must be #{expected}"
       end
 
       @tr.flow_artefacts.create!(
@@ -135,28 +181,22 @@ module FlowState
       )
     end
 
-    def resolve_initial_state
-      init = self.class.initial_state || self.class.all_states.first
-      ensure_known_states!([init]) if init
-      init
-    end
-
     def ensure_known_states!(states)
       unknown = states - self.class.all_states
       raise UnknownStateError, "unknown #{unknown.join(', ')}" if unknown.any?
     end
 
-    def validate_payload
-      schema = self.class.payload_schema
+    def validate_props
+      schema = self.class.props_schema
       return if schema.empty?
 
       schema.each do |key, klass|
-        v = payload&.dig(key.to_s)
-        raise PayloadValidationError, "#{key} missing" unless v
-        raise PayloadValidationError, "#{key} must be #{klass}" unless v.is_a?(klass)
+        v = props&.dig(key.to_s)
+        raise PropsValidationError, "#{key} missing" unless v
+        raise PropsValidationError, "#{key} must be #{klass}" unless v.is_a?(klass)
       end
-    rescue PayloadValidationError => e
-      errors.add(:payload, e.message)
+    rescue PropsValidationError => e
+      errors.add(:props, e.message)
     end
   end
 end
