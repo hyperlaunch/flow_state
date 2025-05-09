@@ -39,6 +39,14 @@ module FlowState
         name ? @completed_state = name.to_sym : @completed_state
       end
 
+      def destroy_on_complete(flag)
+        @destroy_on_complete = flag || false
+      end
+
+      def destroy_on_complete?
+        !!@destroy_on_complete
+      end
+
       def prop(name, type)
         props_schema[name.to_sym] = type
         define_method(name) { props&.dig(name.to_s) }
@@ -67,6 +75,7 @@ module FlowState
 
     validates :current_state, presence: true
     validate :validate_props
+    after_commit :destroy_if_complete, on: :update
 
     after_initialize :validate_initial_states!, if: :new_record?
     after_initialize :assign_initial_state, if: :new_record?
@@ -79,6 +88,16 @@ module FlowState
 
     def errored?
       self.class.error_states.include?(current_state&.to_sym)
+    end
+
+    def completed?
+      self.class.completed_state && current_state&.to_sym == self.class.completed_state
+    end
+
+    def destroy_if_complete
+      return unless self.class.destroy_on_complete?
+
+      destroy! if completed?
     end
 
     private
