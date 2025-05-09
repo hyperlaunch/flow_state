@@ -102,4 +102,32 @@ RSpec.describe FlowState::Base do
       end
     end
   end
+
+  describe 'last_errored_at' do
+    before do
+      stub_const('ErrorFlow', Class.new(FlowState::Base) do
+        self.table_name = 'flow_state_flows'
+        state :ok
+        state :fail, error: true
+        state :ok_again
+        initial_state   :ok
+        completed_state :ok
+      end)
+    end
+
+    it 'sets the timestamp when entering an error state' do
+      f = ErrorFlow.create!
+      expect { f.transition!(from: :ok, to: :fail) }
+        .to change { f.reload.last_errored_at }.from(nil)
+      expect(f.last_errored_at).to be_a_kind_of(Time)
+    end
+
+    it 'clears the timestamp when leaving the error state' do
+      f = ErrorFlow.create!
+
+      f.transition!(from: :ok, to: :fail)
+      expect { f.transition!(from: :fail, to: :ok_again) }
+        .to change { f.reload.last_errored_at }.to(nil)
+    end
+  end
 end

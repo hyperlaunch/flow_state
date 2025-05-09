@@ -49,7 +49,6 @@ module FlowState
 
       def prop(name, type)
         props_schema[name.to_sym] = type
-        define_method(name) { props&.dig(name.to_s) }
       end
 
       def persists(name, type)
@@ -139,7 +138,11 @@ module FlowState
             transitioned_from: current_state,
             transitioned_to: to
           )
-          update!(current_state: to)
+
+          attrs = { current_state: to }
+          attrs[:last_errored_at] = (Time.current if self.class.error_states.include?(to.to_sym))
+          update!(attrs)
+
           persist_artefact! if persists
         end
       end
