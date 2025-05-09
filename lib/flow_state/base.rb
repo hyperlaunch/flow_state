@@ -3,11 +3,12 @@
 module FlowState
   # Base Model to be extended by app flows
   class Base < ActiveRecord::Base # rubocop:disable Metrics/ClassLength
-    class UnknownStateError      < StandardError; end
+    class UnknownStateError < StandardError; end
     class InvalidTransitionError < StandardError; end
     class PayloadValidationError < StandardError; end
-    class GuardFailedError       < StandardError; end
-    class UnknownArtefactError   < StandardError; end
+    class PropsValidationError < StandardError; end
+    class GuardFailedError < StandardError; end
+    class UnknownArtefactError < StandardError; end
 
     DEPRECATOR = ActiveSupport::Deprecation.new(FlowState::VERSION, 'FlowState')
 
@@ -33,8 +34,8 @@ module FlowState
       end
 
       def prop(name, type)
-        payload_schema[name.to_sym] = type
-        define_method(name) { payload&.dig(name.to_s) }
+        props_schema[name.to_sym] = type
+        define_method(name) { props&.dig(name.to_s) }
       end
 
       def persist(name, type)
@@ -49,8 +50,8 @@ module FlowState
         @error_states ||= []
       end
 
-      def payload_schema
-        @payload_schema ||= {}
+      def props_schema
+        @props_schema ||= {}
       end
 
       def artefact_schema
@@ -59,7 +60,7 @@ module FlowState
     end
 
     validates :current_state, presence: true
-    validate :validate_payload
+    validate :validate_props
 
     after_initialize :assign_initial_state, if: :new_record?
 
@@ -126,7 +127,8 @@ module FlowState
     def persist_artefact!
       expected = self.class.artefact_schema[@artefact_name]
       unless @artefact_data.is_a?(expected)
-        raise PayloadValidationError, "artefact #{@artefact_name} must be #{expected}"
+        raise PayloadValidationError,
+              "artefact #{@artefact_name} must be #{expected}"
       end
 
       @tr.flow_artefacts.create!(
@@ -146,17 +148,17 @@ module FlowState
       raise UnknownStateError, "unknown #{unknown.join(', ')}" if unknown.any?
     end
 
-    def validate_payload
-      schema = self.class.payload_schema
+    def validate_props
+      schema = self.class.props_schema
       return if schema.empty?
 
       schema.each do |key, klass|
-        v = payload&.dig(key.to_s)
-        raise PayloadValidationError, "#{key} missing" unless v
-        raise PayloadValidationError, "#{key} must be #{klass}" unless v.is_a?(klass)
+        v = props&.dig(key.to_s)
+        raise PropsValidationError, "#{key} missing" unless v
+        raise PropsValidationError, "#{key} must be #{klass}" unless v.is_a?(klass)
       end
-    rescue PayloadValidationError => e
-      errors.add(:payload, e.message)
+    rescue PropsValidationError => e
+      errors.add(:props, e.message)
     end
   end
 end

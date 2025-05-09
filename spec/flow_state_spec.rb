@@ -16,7 +16,7 @@ RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
     end)
   end
 
-  let!(:flow) { Flow.create!(payload: { name: 'Example' }) }
+  let!(:flow) { Flow.create!(props: { name: 'Example' }) }
 
   describe 'artefact persistence' do # rubocop:disable Metrics/BlockLength
     it 'raises if you pass an unknown persists name' do

@@ -16,7 +16,7 @@ ActiveRecord::Base.establish_connection(
 ActiveRecord::Schema.define do
   create_table :flow_state_flows, force: true do |t|
     t.string :current_state, null: false
-    t.json   :payload
+    t.json   :props
     t.timestamps
   end
 
