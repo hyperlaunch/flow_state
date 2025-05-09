@@ -38,7 +38,7 @@ module FlowState
         define_method(name) { props&.dig(name.to_s) }
       end
 
-      def persist(name, type)
+      def persists(name, type)
         artefact_schema[name.to_sym] = type
       end
 
@@ -64,9 +64,9 @@ module FlowState
 
     after_initialize :assign_initial_state, if: :new_record?
 
-    def transition!(from:, to:, guard: nil, persists: nil, after_transition: nil, &block)
-      setup_transition!(from, to, guard, persists, &block)
-      perform_transition!(to, persists)
+    def transition!(from:, to:, guard: nil, persist: nil, after_transition: nil, &block)
+      setup_transition!(from, to, guard, persist, &block)
+      perform_transition!(to, persist)
       after_transition&.call
     end
 

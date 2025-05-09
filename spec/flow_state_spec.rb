@@ -12,7 +12,7 @@ RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
 
       prop :name, String
 
-      persist :third_party_api_response, Hash
+      persists :third_party_api_response, Hash
     end)
   end
 
@@ -21,13 +21,13 @@ RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
   describe 'artefact persistence' do # rubocop:disable Metrics/BlockLength
     it 'raises if you pass an unknown persists name' do
       expect do
-        flow.transition!(from: :draft, to: :review, persists: :nope) { {} }
+        flow.transition!(from: :draft, to: :review, persist: :nope) { {} }
       end.to raise_error(FlowState::Base::UnknownArtefactError)
     end
 
     it 'raises if the block returns wrong type' do
       expect do
-        flow.transition!(from: :draft, to: :review, persists: :third_party_api_response) { 'not a hash' }
+        flow.transition!(from: :draft, to: :review, persist: :third_party_api_response) { 'not a hash' }
       end.to raise_error(FlowState::Base::PayloadValidationError, /must be Hash/)
     end
 
@@ -36,7 +36,7 @@ RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
       flow.transition!(
         from: :draft,
         to: :review,
-        persists: :third_party_api_response,
+        persist: :third_party_api_response,
         after_transition: lambda {
           expect(flow.flow_transitions.last
             .flow_artefacts
