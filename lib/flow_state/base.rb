@@ -39,8 +39,8 @@ module FlowState
         name ? @completed_state = name.to_sym : @completed_state
       end
 
-      def destroy_on_complete(flag)
-        @destroy_on_complete = flag || false
+      def destroy_on_complete(flag: true)
+        @destroy_on_complete = flag
       end
 
       def destroy_on_complete?

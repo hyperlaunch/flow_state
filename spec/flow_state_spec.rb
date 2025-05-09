@@ -1,4 +1,4 @@
-RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
+RSpec.describe FlowState::Base do
   before do
     stub_const('Flow', Class.new(FlowState::Base) do
       self.table_name = 'flow_state_flows'
@@ -67,8 +67,7 @@ RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
           state :complete
           initial_state :draft
           completed_state :complete
-
-          destroy_on_complete true
+          destroy_on_complete
         end)
       end
 
