@@ -4,251 +4,194 @@
 
 ---
 
-**FlowState** provides a clean, Rails-native way to model **stepped workflows** as explicit, durable workflows, with support for persisting arbitrary artefacts between transitions. It lets you define each step, move between states safely, track execution history, and persist payloads ("artefacts") in a type-safe way — without using metaprogramming, `method_missing`, or other hidden magic.
+**FlowState** is a small gem for Rails, for building *state-machine–style* workflows that persist every step, artefact and decision to your database.
+Everything is explicit – no metaprogramming, no hidden callbacks, no magic helpers.
 
-Perfect for workflows that rely on third party resources and integrations.
-Every workflow instance, transition and artefact is persisted to the database.
-Every change happens through clear, intention-revealing methods that you define yourself.
+Use it when you need to:
 
-Built for real-world systems where you need to:
-- Track complex, multi-step processes
-- Handle failures gracefully with error states and retries
-- Persist state and interim data across asynchronous jobs
-- Store and type-check arbitrary payloads (artefacts) between steps
-- Avoid race conditions via database locks and explicit guards
+* orchestrate multi-step jobs that call external services
+* restart safely after crashes or retries
+* inspect an audit trail of *what happened, when and why*
+* attach typed artefacts (payloads) to a given transition
 
 ---
 
-## Key Features
+## What’s new in 0.2
 
-- **Explicit transitions** — Every state change is triggered manually via a method you define.  
-- **Full execution history** — Every transition is recorded with timestamps and a history table.  
-- **Error recovery** — Model and track failures directly with error states.  
-- **Typed payloads** — Strongly-typed metadata attached to every workflow. 
-- **Artefact persistence** — Declare named and typed artefacts to persist between specific transitions.  
-- **Guard clauses** — Protect transitions with guards that raise if conditions aren’t met.  
-- **Persistence-first** — Workflow state and payloads are stored in your database, not memory.  
-- **No Magic** — No metaprogramming, no dynamic method generation, no `method_missing` tricks.  
+| Change                                                | Why it matters                                                                            |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **`initial_state` & `completed_state` are mandatory** | Keeps definitions explicit and prevents silent mis-configuration.                         |
+| **`destroy_on_complete` macro**                       | One-liner to delete finished flows – replaces manual `after_transition { destroy! }`.     |
+| **`payload` → `props` column**                        | Aligns storage with the `prop` DSL (`flow.props["key"]`). No more auto-generated getters. |
+| **`persist` macro → `persists`**                      | Reads better, matches the transition keyword (`persist:`).                                |
+| **`completed_at` & `last_errored_at` timestamps**     | Easier querying: `where(completed_at: ..)` or `where.not(last_errored_at: nil)`.          |
+
+See the [migration guide](./MIGRATION_0_1_to_0_2.md) for a drop-in migration.
+
+---
+
+## Quick example – syncing an API and saving the result
+
+### 1  Define the flow
+
+```ruby
+class SyncApiFlow < FlowState::Base
+  # typed metadata saved in the JSON `props` column
+  prop :record_id,      String
+  prop :remote_api_id,  String
+
+  # states
+  state :pending
+  state :fetching
+  state :fetched
+  state :saving
+  state :saved
+  state :failed_fetch, error: true
+  state :failed_save,  error: true
+  state :done
+
+  # mandatory
+  initial_state   :pending
+  completed_state :done
+  destroy_on_complete          # <— remove if you prefer to keep rows
+
+  # artefacts persisted at runtime
+  persists :api_response, Hash
+
+  # public API ---------------------------------------------------------
+
+  def start_fetch!
+    transition!(from: :pending, to: :fetching)
+  end
+
+  def finish_fetch!(response)
+    transition!(
+      from:   :fetching,
+      to:     :fetched,
+      persist: :api_response,
+      after_transition: -> { SaveJob.perform_later(id) }
+    ) { response }
+  end
+
+  def fail_fetch!
+    transition!(from: :fetching, to: :failed_fetch)
+  end
+
+  def start_save!
+    transition!(from: :fetched, to: :saving)
+  end
+
+  def finish_save!
+    transition!(from: :saving, to: :saved, after_transition: -> { complete! })
+  end
+
+  def fail_save!
+    transition!(from: :saving, to: :failed_save)
+  end
+
+  def complete!
+    transition!(from: :saved, to: :done)
+  end
+end
+```
+
+### 2  Kick it off
+
+```ruby
+flow = SyncApiFlow.create!(props: {
+  "record_id"     => record.id,
+  "remote_api_id" => remote_id
+})
+
+flow.start_fetch!
+FetchJob.perform_later(flow.id)
+```
+
+### 3  Jobs move the flow
+
+```ruby
+class FetchJob < ApplicationJob
+  def perform(flow_id)
+    flow = SyncApiFlow.find(flow_id)
+
+    response = ThirdParty::Client.new(flow.props["remote_api_id"]).get
+    flow.finish_fetch!(response)
+  rescue StandardError => e
+    begin
+      flow.fail_fetch!
+    rescue StandardError
+      nil
+    end
+    raise e
+  end
+end
+
+class SaveJob < ApplicationJob
+  def perform(flow_id)
+    flow = SyncApiFlow.find(flow_id)
+
+    flow.start_save!
+
+    MyRecord.find(flow.props["record_id"]).update!(payload: artefact(flow, :api_response))
+
+    flow.finish_save!
+  rescue StandardError => e
+    begin
+      flow.fail_save!
+    rescue StandardError
+      nil
+    end
+    raise e
+  end
+  end
+
+  private
+
+  def artefact(flow, name)
+    flow.flow_artefacts.find_by!(name: name.to_s).payload
+  end
+end
+```
+
+That’s it – every step, timestamp, artefact and error is stored automatically.
+
+---
+
+## API reference
+
+### DSL macros
+
+| Macro                             | Description                                                           |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `state :name, error: false`       | Declare a state. `error: true` marks it as a failure state.           |
+| `initial_state :name`             | **Required.** First state assigned to new flows.                      |
+| `completed_state :name`           | **Required.** Terminal state that marks the flow as finished.         |
+| `destroy_on_complete(flag: true)` | Delete the row automatically once the flow reaches `completed_state`. |
+| `prop :key, Type`                 | Typed key stored in JSONB `props`. Access via `flow.props["key"]`.    |
+| `persists :name, Type`            | Declare an artefact that can be saved during a transition.            |
+
+### Instance helpers
+
+| Method                                                                             | Use                                                                            |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `transition!(from:, to:, guard: nil, persist: nil, after_transition: nil) { ... }` | Perform a state change with optional guard, artefact persistence and callback. |
+| `completed?`                                                                       | `true` if `current_state == completed_state`.                                  |
+| `errored?`                                                                         | `true` if the current state is marked `error: true`.                           |
 
 ---
 
 ## Installation
 
-Add to your bundle:
-
 ```bash
 bundle add flow_state
-```
-
-Generate the tables:
-
-```bash
 bin/rails generate flow_state:install
 bin/rails db:migrate
 ```
 
----
-
-## Example: Saving a third party API response to local database
-
-Suppose you want to build a workflow that:
-- Fetches a response from a third party API
-- Allows for retrying the fetch on failure
-- And persists the response to the workflow
-- Then saves the persisted response to the database
-- As two separate, encapsulated jobs
-- Tracking each step, while protecting against race conditions
-
----
-
-### Define your Flow
-
-```ruby
-class SyncThirdPartyApiFlow < FlowState::Base
-  prop :my_record_id, String
-  prop :third_party_id, String
-
-  state :pending
-  state :picked
-  state :fetching_third_party_api
-  state :fetched_third_party_api
-  state :failed_to_fetch_third_party_api, error: true
-  state :saving_my_record
-  state :saved_my_record
-  state :failed_to_save_my_record, error: true
-  state :completed
-
-  persist :third_party_api_response
-
-  initial_state :pending
-
-  def pick!
-    transition!(
-      from: %i[pending],
-      to: :picked,
-      after_transition: -> { enqueue_fetch }
-    )
-  end
-
-  def start_third_party_api_request!
-    transition!(
-      from: %i[picked failed_to_fetch_third_party_api], 
-      to: :fetching_third_party_api
-    )
-  end
-
-  def finish_third_party_api_request!(result)
-    transition!(
-      from: :fetching_third_party_api,
-      to:   :fetched_third_party_api,
-      persists: :third_party_api_response,
-      after_transition: -> { enqueue_save }
-    ) { result }
-  end
-
-  def fail_third_party_api_request!
-    transition!(
-      from: :fetching_third_party_api, 
-      to: :failed_to_fetch_third_party_api
-    )
-  end
-  
-  def start_record_save!
-    transition!(
-      from: %i[fetched_third_party_api failed_to_save_my_record],
-      to:   :saving_my_record,
-      guard: -> { flow_artefacts.where(name: 'third_party_api_response').exists? }
-    )
-  end
-
-  def finish_record_save!
-    transition!(
-      from: :saving_my_record, 
-      to: :saved_my_record,
-      after_transition: -> { complete! }
-    )
-  end
-
-  def fail_record_save!
-    transition!(
-      from: :saving_my_record, 
-      to: :failed_to_save_my_record
-    )
-  end
-
-  def complete!
-    transition!(from: :saved_my_record, to: :completed, after_transition: -> { destroy })
-  end
-
-  private
-
-  def enqueue_fetch
-    FetchThirdPartyJob.perform_later(flow_id: id)
-  end
-
-  def enqueue_save
-    SaveLocalRecordJob.perform_later(flow_id: id)
-  end
-end
-```
-
----
-
-### Background Jobs
-
-Each job moves the flow through the correct states, step-by-step.
-
----
-
-**Create and start the flow**
-
-```ruby
-flow = SyncThirdPartyApiFlow.create(
-  my_record_id: "my_local_record_id", 
-  third_party_id: "some_service_id"
-)
-
-flow.pick!
-```
-
----
-
-**Fetch Third Party API Response**
-
-```ruby
-class FetchThirdPartyJob < ApplicationJob
-  retry_on StandardError,
-           wait: ->(executions) { 10.seconds * (2**executions) },
-           attempts: 3
-
-  def perform(flow_id:)
-    @flow_id = flow_id
-
-    flow.start_third_party_api_request!
-
-    response = ThirdPartyApiRequest.new(id: flow.third_party_id).to_h
-
-    flow.finish_third_party_api_request!(response)
-  rescue
-    flow.fail_third_party_api_request!
-    raise
-  end
-
-  private
-
-  def flow
-    @flow ||= SyncThirdPartyApiFlow.find(@flow_id)
-  end
-end
-```
-
----
-
-**Save Result to Local Database**
-
-```ruby
-class SaveLocalRecordJob < ApplicationJob
-  def perform(flow_id:)
-    @flow_id = flow_id
-
-    flow.start_record_save!
-
-    record.update!(payload: third_party_payload)
-
-    flow.finish_record_save!
-  rescue
-    flow.fail_record_save!
-    raise
-  end
-
-  private
-
-  def flow
-    @flow ||= SyncThirdPartyApiFlow.find(@flow_id)
-  end
-
-  def third_party_payload
-    flow.flow_artefacts
-        .find_by!(name: 'third_party_api_response')
-        .payload
-  end
-
-  def record
-    @record ||= MyRecord.find(flow.my_record_id)
-  end
-end
-```
-
----
-
-## Why use FlowState?
-
-Because it enables you to model workflows explicitly,
-and track real-world execution reliably —  
-**without any magic**.
+Follow the [migration guide](./MIGRATION_0_1_to_0_2.md) if you’re upgrading from 0.1.
 
 ---
 
 ## License
 
-MIT.
+MIT
