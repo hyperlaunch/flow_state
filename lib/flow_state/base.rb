@@ -75,7 +75,7 @@ module FlowState
 
     validates :current_state, presence: true
     validate :validate_props
-    after_commit :destroy_if_complete, on: :update
+    after_commit :handle_completion, on: :update
 
     after_initialize :validate_initial_states!, if: :new_record?
     after_initialize :assign_initial_state, if: :new_record?
@@ -94,10 +94,14 @@ module FlowState
       self.class.completed_state && current_state&.to_sym == self.class.completed_state
     end
 
-    def destroy_if_complete
-      return unless self.class.destroy_on_complete?
+    def handle_completion
+      return unless completed?
 
-      destroy! if completed?
+      if self.class.destroy_on_complete?
+        destroy!
+      elsif completed_at.nil?
+        update_column(:completed_at, Time.current)
+      end
     end
 
     private

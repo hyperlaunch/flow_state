@@ -95,8 +95,10 @@ RSpec.describe FlowState::Base do
         f = KeepFlow.create!
         expect { f.transition!(from: :draft, to: :complete) }
           .not_to(change { KeepFlow.count })
-        expect(f.reload.current_state).to eq('complete')
-        expect(f.reload.completed?).to be true
+        f.reload
+        expect(f.current_state).to eq('complete')
+        expect(f.completed?).to be true
+        expect(f.completed_at).to be_a_kind_of(Time)
       end
     end
   end
