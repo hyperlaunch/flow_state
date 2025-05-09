@@ -1,4 +1,6 @@
-RSpec.describe FlowState::Base do
+# frozen_string_literal: true
+
+RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
   before do
     stub_const('Flow', Class.new(FlowState::Base) do
       self.table_name = 'flow_state_flows'
