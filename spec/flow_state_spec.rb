@@ -9,6 +9,7 @@ RSpec.describe FlowState::Base do # rubocop:disable Metrics/BlockLength
       state :review
       state :failed, error: true
       initial_state :draft
+      completed_state :draft
 
       prop :name, String
 

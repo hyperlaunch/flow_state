@@ -9,6 +9,8 @@ module FlowState
     class PropsValidationError < StandardError; end
     class GuardFailedError < StandardError; end
     class UnknownArtefactError < StandardError; end
+    class MissingInitialStateError   < StandardError; end
+    class MissingCompletedStateError < StandardError; end
 
     DEPRECATOR = ActiveSupport::Deprecation.new(FlowState::VERSION, 'FlowState')
 
@@ -31,6 +33,10 @@ module FlowState
 
       def initial_state(name = nil)
         name ? @initial_state = name.to_sym : @initial_state
+      end
+
+      def completed_state(name = nil)
+        name ? @completed_state = name.to_sym : @completed_state
       end
 
       def prop(name, type)
@@ -62,6 +68,7 @@ module FlowState
     validates :current_state, presence: true
     validate :validate_props
 
+    after_initialize :validate_initial_states!, if: :new_record?
     after_initialize :assign_initial_state, if: :new_record?
 
     def transition!(from:, to:, guard: nil, persist: nil, after_transition: nil, &block)
@@ -76,8 +83,19 @@ module FlowState
 
     private
 
+    def validate_initial_states!
+      init_state = self.class.initial_state
+      comp_state = self.class.completed_state
+
+      raise MissingInitialStateError,   "#{self.class} must declare initial_state"   unless init_state
+      raise MissingCompletedStateError, "#{self.class} must declare completed_state" unless comp_state
+
+      unknown = [init_state, comp_state] - self.class.all_states
+      raise UnknownStateError, "unknown #{unknown.join(', ')}" if unknown.any?
+    end
+
     def assign_initial_state
-      self.current_state ||= resolve_initial_state
+      self.current_state ||= self.class.initial_state
     end
 
     def setup_transition!(from, to, guard, persists, &block)
@@ -135,12 +153,6 @@ module FlowState
         name: @artefact_name.to_s,
         payload: @artefact_data
       )
-    end
-
-    def resolve_initial_state
-      init = self.class.initial_state || self.class.all_states.first
-      ensure_known_states!([init]) if init
-      init
     end
 
     def ensure_known_states!(states)
